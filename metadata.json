@@ -1,0 +1,8 @@
+{
+  "name": "Hồ sơ số — Trường THCS Bạch Liêu",
+  "description": "Hệ thống Hồ sơ số, Trường chuẩn Quốc gia và Đảm bảo chất lượng giáo dục — Trường THCS Bạch Liêu, xã Yên Thành, tỉnh Nghệ An.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

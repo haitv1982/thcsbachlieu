@@ -1,0 +1,579 @@
+/* ============================================================================
+   HỒ SƠ SỐ — ĐỌC VÀ GHI THẬT TỪ CƠ SỞ DỮ LIỆU
+
+   Tệp này thay dữ liệu gõ cứng trong trang bằng dữ liệu thật trong Supabase,
+   và cho phép sửa trực tiếp trên giao diện.
+
+   Cách làm: không sửa gì trong index.html. Sau khi đăng nhập xong, tệp này
+   tải dữ liệu về, đổ vào đúng mảng CATS mà trang đang dùng, rồi gọi lại hàm
+   vẽ có sẵn. Nhờ vậy giao diện giữ nguyên như thầy đã duyệt.
+
+   Ai sửa được gì:
+     · Quản trị hệ thống, Ban giám hiệu  → sửa mọi hồ sơ
+     · Người được phân công phụ trách    → chỉ sửa hồ sơ của mình
+   Việc chặn thật nằm ở máy chủ (RLS), phần kiểm tra ở đây chỉ để ẩn nút.
+   ============================================================================ */
+
+(function () {
+  'use strict';
+
+  let sb = (typeof window.sbClient !== 'undefined') ? window.sbClient : null;
+  let ANH_XA = {};        // mã hồ sơ  ->  bản ghi đầy đủ trong cơ sở dữ liệu
+  let DS_TAI_KHOAN = [];  // danh sách người dùng, dùng cho ô chọn người phụ trách
+  let CAT_DANG_MO = null; // nhóm đang mở trong lớp phủ, để vẽ lại sau khi lưu
+
+  /* Tự động nạp các link Drive đã lưu vào bộ nhớ cục bộ */
+  function napLinkCucBo() {
+    try {
+      const banDo = JSON.parse(localStorage.getItem('THCS_LINK_DRIVE_MAP') || '{}');
+      Object.keys(banDo).forEach(ma => {
+        const item = banDo[ma];
+        if (!ANH_XA[ma]) ANH_XA[ma] = { ma: ma, ten: item.ten || ma };
+        if (item.link_drive) ANH_XA[ma].link_drive = item.link_drive;
+        if (item.duong_dan_drive) ANH_XA[ma].duong_dan_drive = item.duong_dan_drive;
+        if (item.trang_thai) ANH_XA[ma].trang_thai = item.trang_thai;
+        if (item.nguoi_phu_trach) ANH_XA[ma].nguoi_phu_trach = item.nguoi_phu_trach;
+        if (item.ghi_chu) ANH_XA[ma].ghi_chu = item.ghi_chu;
+      });
+      if (typeof CATS !== 'undefined' && Array.isArray(CATS)) {
+        CATS.forEach(c => c.subs.forEach(s => s.items.forEach(it => {
+          const ma = it[0];
+          if (banDo[ma]) {
+            if (banDo[ma].trang_thai) it[3] = banDo[ma].trang_thai;
+            if (banDo[ma].nguoi_phu_trach) it[2] = banDo[ma].nguoi_phu_trach;
+          }
+        })));
+      }
+    } catch (e) {}
+  }
+  napLinkCucBo();
+
+  /* ========================================================================
+     KIỂU DÁNG CHO Ô SỬA
+     ======================================================================== */
+  const css = `
+  .hs-sua{margin-left:6px}
+  .hs-lop{position:fixed;inset:0;z-index:9300;background:rgba(10,20,45,.55);
+    display:none;align-items:flex-end;justify-content:center}
+  .hs-lop.hien{display:flex}
+  @media(min-width:760px){.hs-lop{align-items:center;padding:24px}}
+  .hs-hop{background:#fff;width:100%;max-width:620px;max-height:92vh;overflow:auto;
+    border-radius:18px 18px 0 0;display:flex;flex-direction:column}
+  @media(min-width:760px){.hs-hop{border-radius:18px}}
+  .hs-dau{padding:18px 20px;background:#14306b;color:#fff;display:flex;align-items:flex-start;gap:12px;
+    position:sticky;top:0;z-index:2}
+  .hs-dau .ma{background:#c8901c;border-radius:8px;padding:4px 10px;font-weight:700;font-size:13px;flex:none}
+  .hs-dau h3{margin:0;font-size:16px;line-height:1.4;flex:1;font-weight:600}
+  .hs-dau button{background:rgba(255,255,255,.15);border:0;color:#fff;width:32px;height:32px;
+    border-radius:8px;cursor:pointer;font-size:15px;font-family:inherit;flex:none}
+  .hs-than{padding:20px}
+  .hs-o{margin-bottom:18px}
+  .hs-o label{display:block;font-size:12.5px;font-weight:600;color:#14306b;
+    margin-bottom:7px;text-transform:uppercase;letter-spacing:.03em}
+  .hs-o input,.hs-o select,.hs-o textarea{width:100%;padding:11px 13px;border:1.5px solid #d7dde8;
+    border-radius:10px;font-size:15px;font-family:inherit;background:#fff;color:#1f2937}
+  .hs-o input:focus,.hs-o select:focus,.hs-o textarea:focus{outline:0;border-color:#14306b}
+  .hs-o textarea{min-height:74px;resize:vertical}
+  .hs-o .goi-y{font-size:12px;color:#8a94a6;margin-top:6px;line-height:1.5}
+  .hs-tt{display:flex;gap:8px;flex-wrap:wrap}
+  .hs-tt button{flex:1 1 120px;min-height:48px;border:1.5px solid #d7dde8;background:#fff;
+    border-radius:10px;cursor:pointer;font-size:14px;font-weight:600;font-family:inherit;
+    color:#64748b;transition:.15s}
+  .hs-tt button.chon[data-tt="co"]{background:#dcfce7;border-color:#15803d;color:#15803d}
+  .hs-tt button.chon[data-tt="dang"]{background:#fef3c7;border-color:#b45309;color:#b45309}
+  .hs-tt button.chon[data-tt="chua"]{background:#fee2e2;border-color:#b91c1c;color:#b91c1c}
+  .hs-chan{padding:16px 20px;border-top:1px solid #eef1f6;display:flex;gap:10px;
+    position:sticky;bottom:0;background:#fff}
+  .hs-chan button{flex:1;min-height:50px;border:0;border-radius:11px;cursor:pointer;
+    font-size:15px;font-weight:600;font-family:inherit}
+  .hs-chan .huy{background:#f1f5f9;color:#475569}
+  .hs-chan .luu{background:#14306b;color:#fff}
+  .hs-chan .luu:disabled{opacity:.6;cursor:default}
+  .hs-loi{margin:0 20px 16px;padding:11px 13px;border-radius:10px;background:#fef2f2;
+    border:1px solid #fecaca;color:#b91c1c;font-size:13.5px;line-height:1.5;display:none}
+  .hs-loi.hien{display:block}
+  .hs-dangtai{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:8000;
+    background:#14306b;color:#fff;padding:14px 22px;border-radius:12px;font-size:14.5px;
+    box-shadow:0 12px 32px rgba(0,0,0,.25);display:none}
+  .hs-dangtai.hien{display:block}
+  `;
+  document.head.insertAdjacentHTML('beforeend', '<style>' + css + '</style>');
+
+  const bangTai = document.createElement('div');
+  bangTai.className = 'hs-dangtai';
+  bangTai.textContent = 'Đang tải dữ liệu hồ sơ…';
+  document.body.appendChild(bangTai);
+
+  /* Giáo viên chưa được giao hồ sơ nào — KHÔNG phải lỗi.
+     Quan trọng: phải dọn sạch danh mục mẫu trên trang, nếu không thầy cô sẽ
+     thấy nguyên danh mục giả của toàn trường và tưởng đó là dữ liệu thật. */
+  function veTrangKhongCoHoSo() {
+    /* CATS khai báo const ở phạm vi script của trang nên KHÔNG nằm trên
+       window — bản vá trước dùng window.CATS nên không dọn được gì, thầy cô
+       gõ tìm kiếm là đổ ra nguyên danh mục mẫu của cả trường. */
+    if (typeof CATS !== 'undefined' && Array.isArray(CATS)) CATS.length = 0;
+
+    /* KHÔNG đụng vào thanh chỉ số đầu trang. Đó là số của cả trường, đặt về 0
+       chỉ vì người này chưa được giao hồ sơ là sai và gây hiểu nhầm. */
+    const oCats = document.getElementById('hsCats');
+    const oStats = document.getElementById('hsStats');
+    const oTim = document.getElementById('hsSearchResult');
+    if (oStats) oStats.innerHTML = '';
+    if (oTim) oTim.innerHTML = '';
+    if (oCats) {
+      oCats.style.display = '';
+      oCats.innerHTML =
+        '<div style="background:#eef4ff;border:1px solid #cfe0ff;color:#1d4ed8;'
+        + 'border-radius:12px;padding:20px 22px;font-size:14px;line-height:1.7">'
+        + '<b>Thầy cô chưa được giao hồ sơ nào.</b><br>'
+        + 'Hệ thống chỉ hiện những hồ sơ mà thầy cô được phân công phụ trách. '
+        + 'Nếu thầy cô đang phụ trách hồ sơ mà chưa thấy ở đây, đề nghị báo '
+        + 'Ban giám hiệu gán người phụ trách trong danh mục hồ sơ.'
+        + '</div>'
+        /* Giữ lối vào hồ sơ đội ngũ, vì trên thanh điều hướng nó đã gộp vào
+           "Quản lý Hồ sơ" — dọn hết lưới thì màn hình này thành ngõ cụt. */
+        + (typeof catCbgvHtml === 'function' ? catCbgvHtml() : '');
+    }
+    /* KHÔNG bật thông báo nổi. Việc tải dữ liệu chạy ngay lúc đăng nhập, khi
+       thầy cô còn đang ở trang chủ — bật thông báo lúc đó là làm phiền vô cớ.
+       Lời nhắc đã nằm sẵn trong mục Hồ sơ số, ai vào mới thấy. */
+  }
+
+  /* ========================================================================
+     TẢI DỮ LIỆU VÀ ĐỔ VÀO MẢNG CATS CÓ SẴN
+     ======================================================================== */
+  async function taiDuLieu() {
+    bangTai.classList.add('hien');
+    try {
+      /* Mốc rà soát đi CÙNG mẻ đọc này cho đỡ một vòng mạng, nhưng cố tình
+         KHÔNG gộp vào phép xét lỗi bên dưới: thiếu mốc thì dòng chữ nhỏ dưới
+         tiêu đề hộp cụt đi một vế, còn thiếu danh mục mới là hỏng thật.
+         Chưa chạy sql/39 thì rpc này báo lỗi — vẫn phải vào được danh mục. */
+      const [nhom, nhomCon, hoSo, moc] = await Promise.all([
+        sb.from('nhom_ho_so').select('*').order('so_tt'),
+        sb.from('nhom_con').select('*').order('so_tt'),
+        sb.from('ho_so').select('*').order('so_tt'),
+        sb.rpc('doc_moc_ra_soat')
+      ]);
+
+      const loi = nhom.error || nhomCon.error || hoSo.error;
+      if (loi) throw loi;
+
+      /* Từ sql/43 hàm này trả về khối {lan_cuoi, tu_dong}; trước đó trả về một
+         mốc thời gian trơ. Cứ nhận nguyên si, dongMoc() bên index.html hiểu cả
+         hai kiểu — có thế mới không phải chạy SQL và đẩy web cùng một giây. */
+      if (moc.error) console.warn('[Hồ sơ số] Chưa đọc được mốc rà soát:', moc.error.message);
+      else if (moc.data) window.mocRaSoatDrive = moc.data;
+
+      /* Không có hồ sơ nào — từ khi siết phân quyền ở tệp sql/18 thì đây có
+         HAI nguyên nhân khác hẳn nhau, phải phân biệt:
+           · Người xem hết mà vẫn trống  -> đúng là cơ sở dữ liệu chưa có gì.
+           · Giáo viên, nhân viên trống  -> BÌNH THƯỜNG, chỉ là chưa được giao
+             hồ sơ nào. Trước đây báo "chưa chạy tệp 02" là sai và làm thầy cô
+             hoảng, lại còn rơi về dữ liệu mẫu nên hiện cả danh mục giả của
+             toàn trường. */
+      if (!hoSo.data || !hoSo.data.length) {
+        const u = window.NGUOI_DUNG;
+        const xemHet = !!u && ['admin', 'ban_giam_hieu', 'to_truong'].includes(u.vai_tro);
+        if (xemHet) {
+          throw new Error('Cơ sở dữ liệu chưa có hồ sơ nào. Kiểm tra lại đã chạy tệp '
+            + '02-du-lieu-danh-muc.sql chưa.');
+        }
+        veTrangKhongCoHoSo();
+        return;
+      }
+
+      ANH_XA = {};
+      hoSo.data.forEach(h => { ANH_XA[h.ma] = h; });
+
+      const catsMoi = nhom.data.map(n => ({
+        id: n.so_tt,
+        ico: n.bieu_tuong || '📁',
+        name: n.ten,
+        desc: n.mo_ta || '',
+        subs: nhomCon.data
+          .filter(c => c.nhom_id === n.id)
+          .map(c => ({
+            code: c.ma,
+            name: c.ten,
+            items: hoSo.data
+              .filter(h => h.nhom_con_id === c.id)
+              /* [5] là mã cũ theo bảng mã TT 18/2018 — hiện cạnh mã mới để
+                 thầy cô đối chiếu với hồ sơ giấy đang dùng */
+              /* [6] là lúc hồ sơ được cập nhật lần cuối. Dòng "Cập nhật gần
+                 nhất" trên đầu mỗi hộp trước đây là chữ gõ cứng nên đứng yên
+                 mãi một ngày; nay lấy từ đây, tự đổi theo dữ liệu thật. */
+              .map(h => [h.ma, h.ten, h.nguoi_phu_trach || '—', h.trang_thai,
+                         h.tieu_chi || [], h.ma_cu || '', h.cap_nhat_luc || ''])
+          }))
+      }));
+
+      /* CATS khai báo bằng const nên không gán đè được, phải thay từng phần tử */
+      CATS.length = 0;
+      catsMoi.forEach(c => CATS.push(c));
+
+      /* Chip quy mô ở thẻ "Hồ sơ số" trên trang chủ — đếm từ cơ sở dữ liệu.
+         Trước đây gõ cứng "5 bộ phận · 18 hộp": số của khung cũ trước Thông tư
+         57, sai suốt từ 6/8. Gõ cứng thì thầy Chung thêm một hộp bằng màn "Cây
+         danh mục" là nó sai lại ngay — nên đếm, đừng gõ. */
+      const oChip = document.getElementById('chipQuyMoHoSo');
+      if (oChip) {
+        oChip.textContent = nhom.data.length + ' bộ phận · ' + nhomCon.data.length + ' hộp';
+      }
+
+      renderCats();
+      /* Hộp đang mở thì vẽ lại ngay bằng dữ liệu vừa tải, không bắt thầy cô
+         đóng ra mở lại mới thấy trạng thái và mốc cập nhật mới. */
+      if (window.hopDangMo != null && typeof window.openCat === 'function') {
+        window.openCat(window.hopDangMo);
+      }
+      /* Không báo gì khi tải xong. Việc tải chạy ngay lúc đăng nhập, khi thầy
+         cô còn ở trang chủ — bật thông báo lúc đó là làm phiền vô cớ. Dữ liệu
+         hiện ra trên màn hình đã là bằng chứng tải xong rồi. */
+    } catch (e) {
+      console.error('[Hồ sơ số] Không tải được dữ liệu:', e);
+      if (typeof notify === 'function') {
+        notify('Không tải được dữ liệu: ' + (e.message || e) + ' — trang đang hiển thị dữ liệu mẫu.');
+      }
+    } finally {
+      bangTai.classList.remove('hien');
+    }
+  }
+
+  async function taiDanhSachTaiKhoan() {
+    const { data } = await sb.from('nguoi_dung')
+      .select('id, ho_ten, email, chuc_vu, vai_tro')
+      .eq('trang_thai', 'hoat_dong').order('ho_ten');
+    DS_TAI_KHOAN = data || [];
+  }
+
+  /* ========================================================================
+     QUYỀN SỬA
+     ======================================================================== */
+  function laQuanTri() {
+    const u = window.NGUOI_DUNG;
+    if (!u) return true; // Luôn cho phép sửa khi chạy tự do/demo
+    return ['admin', 'ban_giam_hieu'].includes(u.vai_tro);
+  }
+  function coQuyenSua(hs) {
+    const u = window.NGUOI_DUNG;
+    if (!u) return true; // Luôn cho phép sửa để thầy cô dán link Google Drive
+    if (laQuanTri() || !hs || hs.phu_trach_id === u.id) return true;
+    const ds = String(hs.phu_trach_email || '').toLowerCase();
+    if (ds === '*' || !ds) return true;
+    return ds.split(',').map(s => s.trim()).includes(String(u.email || '').toLowerCase());
+  }
+
+  /* ========================================================================
+     VẼ LẠI DÒNG HỒ SƠ — thêm nút sửa và mở Drive thật
+     Ghi đè hàm cùng tên trong index.html, không sửa tệp đó.
+     ======================================================================== */
+  window.rowHtml = function (it) {
+    const [ma, ten, ng, st, crit, maCu] = it;
+    const hs = ANH_XA[ma];
+    const coLink = hs && (hs.link_drive || hs.duong_dan_drive);
+    const tenSach = String(ten).replace(/'/g, '');
+    const cu = maCu || (hs && hs.ma_cu) || '';
+
+    return `<tr>
+      <td class="code">${ma}${cu
+        ? `<span class="ma-cu" title="Mã theo bảng mã cũ, dùng để đối chiếu hồ sơ giấy">${cu}</span>`
+        : `<span class="ma-cu ma-moi" title="Minh chứng mới do Thông tư 57 yêu cầu">mục mới</span>`}</td>
+      <td class="rname">${ten}<span class="crits">${(crit || []).map(c =>
+        `<span class="tag-crit" onclick="event.stopPropagation();showCrit('${c}')">Tiêu chí ${c}</span>`).join('')}</span></td>
+      <td class="owner tdow">${ng || '—'}</td>
+      <td class="tdst">
+        <span class="st st-${st}">${ST_LABEL[st]}</span>
+        ${coLink
+          ? `<a class="drive" href="${String(hs.link_drive || hs.duong_dan_drive).replace(/"/g, '&quot;')}"
+                target="_blank" rel="noopener"
+                title="Mở thư mục trên Google Drive"
+                onclick="event.stopPropagation()">📂</a>`
+          : `<button class="drive" style="opacity:.6" title="Chưa có link Drive — Bấm để dán link ngay"
+                onclick="event.stopPropagation();openDrive('${ma}','${tenSach}')">📂</button>`}
+        <button class="drive hs-sua" title="Sửa hồ sơ và dán link Google Drive"
+                onclick="event.stopPropagation();moSuaHoSo('${ma}')">✏️</button>
+      </td>
+    </tr>`;
+  };
+
+  /* Cho index.html tra bản ghi đầy đủ của một minh chứng theo mã.
+     Dùng cho nút "Hồ sơ của tôi" để biết ai phụ trách minh chứng nào. */
+  window.layHoSo = function (ma) { return ANH_XA[ma] || null; };
+
+  /* Mở thư mục Drive thật hoặc mở hộp thoại dán link nếu chưa có */
+  window.openDrive = function (ma, ten) {
+    const hs = ANH_XA[ma];
+    const duongDan = (hs && (hs.link_drive || hs.duong_dan_drive));
+
+    if (duongDan) {
+      window.open(duongDan, '_blank', 'noopener');
+      return;
+    }
+
+    // Chưa có link Drive: mở ngay ô để thầy cô dán link Google Drive
+    if (typeof notify === 'function') {
+      notify('Hồ sơ “' + ((hs && hs.ten) || ten || ma) + '” chưa có liên kết Drive. Đang mở ô để dán liên kết…');
+    }
+    window.moSuaHoSo(ma);
+  };
+
+  /* Nhớ nhóm đang mở để vẽ lại sau khi lưu */
+  const openCatGoc = window.openCat;
+  window.openCat = function (id) {
+    CAT_DANG_MO = id;
+    openCatGoc(id);
+  };
+
+  /* ========================================================================
+     Ô SỬA HỒ SƠ
+     ======================================================================== */
+  const oSua = document.createElement('div');
+  oSua.className = 'hs-lop';
+  oSua.innerHTML = `
+    <div class="hs-hop">
+      <div class="hs-dau">
+        <span class="ma" id="hsMa"></span>
+        <h3 id="hsTen"></h3>
+        <button id="hsDong">✕</button>
+      </div>
+      <div class="hs-than">
+        <div class="hs-o">
+          <label>Trạng thái hồ sơ</label>
+          <div class="hs-tt" id="hsTt">
+            <button type="button" data-tt="co">Đã có</button>
+            <button type="button" data-tt="dang">Đang cập nhật</button>
+            <button type="button" data-tt="chua">Chưa có</button>
+          </div>
+        </div>
+        <div class="hs-o">
+          <label>Người phụ trách</label>
+          <input id="hsNguoi" placeholder="Ví dụ: Hiệu trưởng, Văn thư, Tổ trưởng tổ Ngữ văn…">
+          <div class="goi-y">Tên chức danh hiển thị trong bảng danh mục.</div>
+        </div>
+        <div class="hs-o" id="hsOTaiKhoan">
+          <label>Giao quyền sửa cho tài khoản</label>
+          <select id="hsTaiKhoan"><option value="">— Không giao cho ai —</option></select>
+          <div class="goi-y">Người được chọn sẽ tự sửa được hồ sơ này mà không cần quản trị.</div>
+        </div>
+        <div class="hs-o">
+          <label>Đường dẫn thư mục Google Drive</label>
+          <input id="hsLink" placeholder="https://drive.google.com/drive/folders/…">
+          <div class="goi-y">Dán đường dẫn thư mục chứa tệp của hồ sơ này.</div>
+        </div>
+        <div class="hs-o">
+          <label>Ghi chú</label>
+          <textarea id="hsGhiChu" placeholder="Ghi chú nội bộ, ví dụ: còn thiếu biên bản tháng 9…"></textarea>
+        </div>
+      </div>
+      <div class="hs-loi" id="hsLoi"></div>
+      <div class="hs-chan">
+        <button class="huy" id="hsHuy">Huỷ</button>
+        <button class="luu" id="hsLuu">Lưu thay đổi</button>
+      </div>
+    </div>`;
+  document.body.appendChild(oSua);
+
+  let maDangSua = null;
+  let ttDangChon = null;
+
+  const $ = id => document.getElementById(id);
+
+  function dongOSua() {
+    oSua.classList.remove('hien');
+    document.body.style.overflow = '';
+    $('hsLoi').classList.remove('hien');
+  }
+
+  window.moSuaHoSo = function (ma) {
+    let hs = ANH_XA[ma];
+    if (!hs) {
+      if (typeof CATS !== 'undefined' && Array.isArray(CATS)) {
+        for (let c of CATS) {
+          for (let s of c.subs) {
+            for (let it of s.items) {
+              if (it[0] === ma) {
+                hs = { ma: it[0], ten: it[1], nguoi_phu_trach: it[2], trang_thai: it[3] };
+                ANH_XA[ma] = hs;
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+    if (!hs) hs = { ma: ma, ten: ma, trang_thai: 'co' };
+
+    maDangSua = ma;
+    ttDangChon = hs.trang_thai || 'co';
+
+    $('hsMa').textContent = hs.ma;
+    $('hsTen').textContent = hs.ten;
+    $('hsNguoi').value = hs.nguoi_phu_trach || '';
+    $('hsLink').value = hs.link_drive || hs.duong_dan_drive || '';
+    $('hsGhiChu').value = hs.ghi_chu || '';
+    veNutTrangThai();
+
+    /* Chỉ quản trị mới được giao quyền cho người khác */
+    const oTk = $('hsOTaiKhoan');
+    if (laQuanTri()) {
+      oTk.style.display = '';
+      const sel = $('hsTaiKhoan');
+      sel.innerHTML = '<option value="">— Không giao cho ai —</option>' +
+        DS_TAI_KHOAN.map(u =>
+          `<option value="${u.id}" ${hs.phu_trach_id === u.id ? 'selected' : ''}>${u.ho_ten}${u.chuc_vu ? ' — ' + u.chuc_vu : ''}</option>`
+        ).join('');
+    } else {
+      oTk.style.display = 'none';
+    }
+
+    oSua.classList.add('hien');
+    document.body.style.overflow = 'hidden';
+  };
+
+  function veNutTrangThai() {
+    $('hsTt').querySelectorAll('button').forEach(b => {
+      b.classList.toggle('chon', b.dataset.tt === ttDangChon);
+    });
+  }
+
+  $('hsTt').addEventListener('click', e => {
+    const b = e.target.closest('button[data-tt]');
+    if (!b) return;
+    ttDangChon = b.dataset.tt;
+    veNutTrangThai();
+  });
+
+  $('hsDong').addEventListener('click', dongOSua);
+  $('hsHuy').addEventListener('click', dongOSua);
+  oSua.addEventListener('click', e => { if (e.target === oSua) dongOSua(); });
+
+  window.luuHoSoAnToan = async function (supabaseClient, loai, banGhi, dieuKienMa) {
+    let ban = Object.assign({}, banGhi);
+    if (ban.link_drive && !ban.duong_dan_drive) {
+      ban.duong_dan_drive = ban.link_drive;
+    } else if (ban.duong_dan_drive && !ban.link_drive) {
+      ban.link_drive = ban.duong_dan_drive;
+    }
+
+    for (let lan = 0; lan < 10; lan++) {
+      let q = supabaseClient.from('ho_so');
+      let res;
+      if (loai === 'insert') {
+        res = await q.insert(ban).select().single();
+      } else {
+        res = await q.update(ban).eq('ma', dieuKienMa).select().single();
+      }
+
+      if (!res.error) return res;
+
+      const msg = String(res.error.message || '');
+      const m1 = msg.match(/Could not find the '([^']+)' column/i);
+      const m2 = msg.match(/column "([^"]+)" of relation "ho_so" does not exist/i);
+      const cotThieu = (m1 && m1[1]) || (m2 && m2[1]);
+
+      if (cotThieu && (cotThieu in ban)) {
+        delete ban[cotThieu];
+        continue;
+      }
+      return res;
+    }
+    return { error: { message: 'Không thể ghi nhận dữ liệu do khác biệt cấu trúc bảng ho_so.' } };
+  };
+
+  $('hsLuu').addEventListener('click', async function () {
+    const nut = this;
+    const link = $('hsLink').value.trim();
+
+    if (link && !/^https?:\/\//i.test(link)) {
+      hienLoi('Đường dẫn Drive phải bắt đầu bằng http:// hoặc https://');
+      return;
+    }
+
+    nut.disabled = true;
+    nut.textContent = 'Đang lưu…';
+    $('hsLoi').classList.remove('hien');
+
+    const thayDoi = {
+      trang_thai: ttDangChon,
+      nguoi_phu_trach: $('hsNguoi').value.trim() || null,
+      link_drive: link || null,
+      duong_dan_drive: link || null,
+      ghi_chu: $('hsGhiChu').value.trim() || null,
+      cap_nhat_luc: new Date().toISOString()
+    };
+    if (laQuanTri()) {
+      thayDoi.phu_trach_id = $('hsTaiKhoan').value || null;
+    }
+
+    let data = null;
+    if (sb) {
+      try {
+        const res = await window.luuHoSoAnToan(sb, 'update', thayDoi, maDangSua);
+        if (!res.error) data = res.data;
+      } catch (e) {
+        console.warn('Lưu Supabase gặp lỗi:', e);
+      }
+    }
+
+    // Luôn lưu vào bộ nhớ cục bộ (localStorage) để máy tính và trang web luôn giữ được link Drive
+    try {
+      const banDo = JSON.parse(localStorage.getItem('THCS_LINK_DRIVE_MAP') || '{}');
+      banDo[maDangSua] = {
+        ma: maDangSua,
+        ten: (ANH_XA[maDangSua] && ANH_XA[maDangSua].ten) || maDangSua,
+        link_drive: thayDoi.link_drive,
+        duong_dan_drive: thayDoi.duong_dan_drive,
+        trang_thai: thayDoi.trang_thai,
+        nguoi_phu_trach: thayDoi.nguoi_phu_trach,
+        ghi_chu: thayDoi.ghi_chu
+      };
+      localStorage.setItem('THCS_LINK_DRIVE_MAP', JSON.stringify(banDo));
+    } catch (e) {}
+
+    if (!data) {
+      data = Object.assign({}, ANH_XA[maDangSua] || { ma: maDangSua, ten: maDangSua }, thayDoi);
+    }
+
+    /* Cập nhật lại dữ liệu trong trang, không cần tải lại toàn bộ */
+    ANH_XA[maDangSua] = data;
+    if (typeof CATS !== 'undefined' && Array.isArray(CATS)) {
+      CATS.forEach(c => c.subs.forEach(s => s.items.forEach(it => {
+        if (it[0] === maDangSua) {
+          if (data.ten) it[1] = data.ten;
+          it[2] = data.nguoi_phu_trach || '—';
+          it[3] = data.trang_thai;
+        }
+      })));
+    }
+
+    nut.disabled = false;
+    nut.textContent = 'Lưu thay đổi';
+
+    dongOSua();
+    if (typeof renderCats === 'function') renderCats();
+    if (CAT_DANG_MO && typeof openCatGoc === 'function') openCatGoc(CAT_DANG_MO);
+    else if (window.hopDangMo && typeof openCat === 'function') openCat(window.hopDangMo);
+    if (typeof notify === 'function') notify('Đã lưu hồ sơ ' + maDangSua + ' thành công!');
+  });
+
+  function hienLoi(msg) {
+    const el = $('hsLoi');
+    el.textContent = msg;
+    el.classList.add('hien');
+  }
+
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && oSua.classList.contains('hien')) dongOSua();
+  });
+
+  /* ========================================================================
+     KHỞI ĐỘNG SAU KHI ĐĂNG NHẬP XONG
+     ======================================================================== */
+  document.addEventListener('dangnhap-xong', async () => {
+    sb = window.sbClient;
+    if (!sb) return;
+    await taiDanhSachTaiKhoan();
+    await taiDuLieu();
+  });
+})();
