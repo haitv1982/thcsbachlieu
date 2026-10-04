@@ -1173,7 +1173,7 @@ table.data td:last-child, table.data th:last-child,
       <button data-go="kdcl">Trường chuẩn Quốc gia</button>
       <button data-go="dbcl">Đảm bảo chất lượng</button>
       <button data-go="huongdan" class="nav-hd" title="Hướng dẫn sử dụng">? Hướng dẫn</button>
-      <button type="button" onclick="if(window.moHuongDanLienKet)window.moHuongDanLienKet('gh')" class="nav-hd" style="background:rgba(200,144,28,.22);border:1px solid rgba(200,144,28,.45);color:#ffe08a;font-weight:600" title="Hướng dẫn liên kết GitHub & CSDL Supabase">⚙️ CSDL & GitHub</button>
+      <button type="button" onclick="moCSDLVaGitHub()" class="nav-hd" style="background:rgba(200,144,28,.22);border:1px solid rgba(200,144,28,.45);color:#ffe08a;font-weight:600" title="Hướng dẫn liên kết GitHub & CSDL Supabase">⚙️ CSDL & GitHub</button>
     </nav>
     <button class="nav-burger" onclick="toggleDrawer()">☰</button>
   </div>
@@ -1184,9 +1184,28 @@ table.data td:last-child, table.data th:last-child,
     <button data-go="kdcl">✅ Trường chuẩn Quốc gia</button>
     <button data-go="dbcl">📈 Đảm bảo chất lượng</button>
     <button data-go="huongdan">❓ Hướng dẫn sử dụng</button>
-    <button type="button" onclick="if(window.moHuongDanLienKet)window.moHuongDanLienKet('gh')" style="color:#c8901c;font-weight:700">⚙️ Hướng dẫn CSDL & GitHub</button>
+    <button type="button" onclick="moCSDLVaGitHub()" style="color:#c8901c;font-weight:700">⚙️ Hướng dẫn CSDL & GitHub</button>
   </div>
 </header>
+<script>
+function moCSDLVaGitHub() {
+  if (typeof window.moHuongDanLienKet === 'function') {
+    window.moHuongDanLienKet('gh');
+    return;
+  }
+  setTimeout(function() {
+    if (typeof window.moHuongDanLienKet === 'function') {
+      window.moHuongDanLienKet('gh');
+    } else {
+      if (typeof notify === 'function') {
+        notify('Đang kết nối hệ thống CSDL & GitHub, vui lòng chờ trong giây lát...');
+      } else {
+        alert('Đang kết nối hệ thống CSDL & GitHub. Thầy cô vui lòng kiểm tra kết nối mạng hoặc thử lại sau vài giây.');
+      }
+    }
+  }, 200);
+}
+</script>
 
 <!-- ============ TRANG CHỦ ============ -->
 <section class="view on" id="view-home">
@@ -3061,7 +3080,7 @@ renderDbcl();
 <!-- ============ ĐĂNG NHẬP BẰNG TÀI KHOẢN GOOGLE ============
      Ba tệp dưới đây chỉ hoạt động khi js/cauhinh.js đã được điền địa chỉ
      cơ sở dữ liệu. Chưa điền thì trang chạy y như trước, không đòi đăng nhập. -->
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="this.onerror=null;this.src='https://unpkg.com/@supabase/supabase-js@2'"></script>
 <script src="js/cauhinh.js?v=202610011400"></script>
 <script src="js/dangnhap.js?v=202610011400"></script>
 <script src="js/hoso-sql.js?v=202610011400"></script>
